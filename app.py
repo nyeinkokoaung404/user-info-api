@@ -1,4 +1,4 @@
-# main.py - Vercel deployment အတွက် main file
+# app.py - Vercel deployment
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +11,7 @@ import os
 import asyncio
 import threading
 
-# Vercel environment variables ကိုဖတ်ရန်
+# Vercel environment variables
 API_ID = int(os.getenv("API_ID", "24785831"))
 API_HASH = os.getenv("API_HASH", "81b87c7c85bf0c4ca15ca94dcea3fb95")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7949734572:AAEcHhj8nJAEr1NUC7TMcn7dIusz2Ok6pdQ")
@@ -22,7 +22,7 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
 
 app = FastAPI(title="Telegram Info API", description="Get Telegram user/chat information", version="2.0.0")
 
-# CORS ကို enable လုပ်ထားပါတယ်
+# CORS enable
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,7 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pyrogram client setup
+# Pyrofork client setup
 client = None
 client_lock = threading.Lock()
 
@@ -116,7 +116,7 @@ async def ensure_client():
                     api_id=API_ID,
                     api_hash=API_HASH,
                     bot_token=BOT_TOKEN,
-                    in_memory=True  # Vercel serverless အတွက် လိုအပ်ပါတယ်
+                    in_memory=True  # Vercel serverless
                 )
                 await client.start()
                 print("Pyrogram client started successfully")
@@ -217,8 +217,8 @@ async def get_user_info(username):
             "account_created": account_created_str,
             "account_age": account_age,
             "profile_photo_url": profile_photo_url,
-            "api_owner": "@ISmartCoder",
-            "api_updates": "t.me/abirxdhackz",
+            "api_owner": "@nkka404",
+            "api_updates": "t.me/premium_channel_404",
             "links": {
                 "android": f"tg://openmessage?user_id={user.id}",
                 "ios": f"tg://user?id={user.id}",
@@ -287,8 +287,8 @@ async def get_chat_info(username):
             "frozen_icon": getattr(chat, 'frozen_icon', None),
             "flags": flags,
             "profile_photo_url": profile_photo_url,
-            "api_owner": "@ISmartCoder",
-            "api_updates": "t.me/abirxdhackz",
+            "api_owner": "@nkka404",
+            "api_updates": "t.me/premium_channel_404",
             "links": {
                 "join": join_link,
                 "permanent": permanent_link
@@ -313,7 +313,7 @@ async def get_telegram_info(username):
     if chat_info["success"]:
         return chat_info
     
-    return {"success": False, "error": "Entity not found in Telegram database", "api_owner": "@ISmartCoder", "api_updates": "t.me/abirxdhackz"}
+    return {"success": False, "error": "Entity not found in Telegram database", "api_owner": "@nkka404", "api_updates": "t.me/premium_channel_404"}
 
 @app.get("/")
 async def root():
@@ -326,8 +326,8 @@ async def root():
             "/health": "Check API health"
         },
         "version": "2.0.0",
-        "owner": "@ISmartCoder",
-        "updates": "t.me/abirxdhackz"
+        "owner": "@nkka404",
+        "updates": "t.me/premium_channel_404"
     }
 
 @app.get("/api")
@@ -338,8 +338,8 @@ async def info_endpoint(username: str = "", size: int = 320):
             detail={
                 "success": False,
                 "error": "Missing 'username' parameter",
-                "api_owner": "@ISmartCoder",
-                "api_updates": "t.me/abirxdhackz"
+                "api_owner": "@nkka404",
+                "api_updates": "t.me/premium_channel_404"
             }
         )
     
@@ -362,8 +362,8 @@ async def info_endpoint(username: str = "", size: int = 320):
             detail={
                 "success": False,
                 "error": f"Internal server error: {str(e)}",
-                "api_owner": "@ISmartCoder",
-                "api_updates": "t.me/abirxdhackz"
+                "api_owner": "@nkka404",
+                "api_updates": "t.me/premium_channel_404"
             }
         )
 
