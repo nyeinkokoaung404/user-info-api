@@ -1,4 +1,4 @@
-# main.py - Vercel deployment အတွက် main file
+# app.py - Vercel deployment
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,11 +7,12 @@ from pyrogram.enums import ChatType, UserStatus
 from pyrogram.errors import PeerIdInvalid, UsernameNotOccupied, ChannelInvalid
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
+import re
 import os
 import asyncio
 import threading
 
-# Vercel environment variables ကိုဖတ်ရန်
+# Vercel environment variables
 API_ID = int(os.getenv("API_ID", "24785831"))
 API_HASH = os.getenv("API_HASH", "81b87c7c85bf0c4ca15ca94dcea3fb95")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ")
@@ -22,7 +23,7 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
 
 app = FastAPI(title="Telegram Info API", description="Get Telegram user/chat information", version="2.0.0")
 
-# CORS ကို enable လုပ်ထားပါတယ်
+# CORS enable
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -93,6 +94,60 @@ def format_usernames_list(usernames):
             formatted_usernames.append(str(username_obj))
     return formatted_usernames
 
+def clean_username_or_id(input_str):
+    """
+    Clean and extract username/ID from various input formats
+    Supports:
+    - https://t.me/username
+    - t.me/username  
+    - @username
+    - username
+    - https://t.me/joinchat/xxxx (for private groups)
+    - User IDs
+    """
+    if not input_str:
+        return None
+    
+    # Remove leading/trailing whitespace
+    cleaned = input_str.strip()
+    
+    # Case 1: https://t.me/username or t.me/username
+    telegram_patterns = [
+        r'https?://(?:www\.)?t\.me/([a-zA-Z0-9_]+)',
+        r'https?://(?:www\.)?telegram\.me/([a-zA-Z0-9_]+)',
+        r'https?://(?:www\.)?telegram\.dog/([a-zA-Z0-9_]+)',
+        r't\.me/([a-zA-Z0-9_]+)',
+        r'telegram\.me/([a-zA-Z0-9_]+)',
+        r'telegram\.dog/([a-zA-Z0-9_]+)'
+    ]
+    
+    for pattern in telegram_patterns:
+        match = re.search(pattern, cleaned)
+        if match:
+            return match.group(1)
+    
+    # Case 2: Join chat links (private groups)
+    joinchat_pattern = r'https?://(?:www\.)?t\.me/joinchat/([a-zA-Z0-9_-]+)'
+    match = re.search(joinchat_pattern, cleaned)
+    if match:
+        return match.group(1)
+    
+    # Case 3: +joinchat links (another format)
+    plus_joinchat_pattern = r'https?://(?:www\.)?t\.me/\+([a-zA-Z0-9_-]+)'
+    match = re.search(plus_joinchat_pattern, cleaned)
+    if match:
+        return match.group(1)
+    
+    # Case 4: @username format
+    if cleaned.startswith('@'):
+        return cleaned[1:]
+    
+    # Case 5: Direct username or ID
+    # Remove any remaining special characters
+    cleaned = re.sub(r'[^a-zA-Z0-9_\-]', '', cleaned)
+    
+    return cleaned if cleaned else None
+
 async def ensure_client():
     global client
     with client_lock:
@@ -103,7 +158,7 @@ async def ensure_client():
                     api_id=API_ID,
                     api_hash=API_HASH,
                     bot_token=BOT_TOKEN,
-                    in_memory=True  # Vercel serverless အတွက် လိုအပ်ပါတယ်
+                    in_memory=True  # Vercel serverless
                 )
                 await client.start()
                 print("Pyrogram client started successfully")
@@ -143,23 +198,32 @@ async def ensure_client():
         
         return True
 
-async def get_user_info(username):
+async def get_user_info(username_or_id):
     try:
         if not await ensure_client():
             return {"success": False, "error": "Client initialization failed"}
         
         DC_LOCATIONS = get_dc_locations()
         
+        # Clean the input
+        cleaned_input = clean_username_or_id(username_or_id)
+        if not cleaned_input:
+            return {"success": False, "error": "Invalid username or ID format"}
+        
+        print(f"Looking up user with cleaned input: {cleaned_input}")
+        
         # Try to get user by username or ID
         try:
-            user = await client.get_users(username)
-        except Exception:
-            # If username fails, try as user ID
-            try:
-                user_id = int(username)
+            # First try as user ID if it's numeric
+            if cleaned_input.isdigit():
+                user_id = int(cleaned_input)
                 user = await client.get_users(user_id)
-            except:
-                return {"success": False, "error": "User not found"}
+            else:
+                # Try as username
+                user = await client.get_users(cleaned_input)
+        except Exception as e:
+            print(f"Error getting user: {str(e)}")
+            return {"success": False, "error": "User not found"}
         
         # Get full user info to retrieve bio
         try:
@@ -178,7 +242,6 @@ async def get_user_info(username):
         
         usernames_list = format_usernames_list(getattr(user, 'usernames', []))
         
-        # သင့်ရဲ့ JavaScript အတွက် လိုအပ်တဲ့ format
         user_data = {
             "success": True,
             "type": "bot" if user.is_bot else "user",
@@ -195,8 +258,8 @@ async def get_user_info(username):
             "account_created": account_created_str,
             "account_age": account_age,
             "profile_photo_url": profile_photo_url,
-            "api_owner": "@ISmartCoder",
-            "api_updates": "t.me/abirxdhackz",
+            "api_owner": "@nkka404",
+            "api_updates": "t.me/premium_channel_404",
             "links": {
                 "android": f"tg://openmessage?user_id={user.id}",
                 "ios": f"tg://user?id={user.id}",
@@ -210,23 +273,36 @@ async def get_user_info(username):
         print(f"Error fetching user info: {str(e)}")
         return {"success": False, "error": f"Failed to fetch user information: {str(e)}"}
 
-async def get_chat_info(username):
+async def get_chat_info(username_or_id):
     try:
         if not await ensure_client():
             return {"success": False, "error": "Client initialization failed"}
         
         DC_LOCATIONS = get_dc_locations()
         
+        # Clean the input
+        cleaned_input = clean_username_or_id(username_or_id)
+        if not cleaned_input:
+            return {"success": False, "error": "Invalid username or ID format"}
+        
+        print(f"Looking up chat with cleaned input: {cleaned_input}")
+        
         # Try to get chat by username or ID
         try:
-            chat = await client.get_chat(username)
-        except Exception:
-            # If username fails, try as chat ID
-            try:
-                chat_id = int(username.replace('-100', ''))
-                chat = await client.get_chat(chat_id)
-            except:
-                return {"success": False, "error": "Chat not found"}
+            # First try as chat ID if it's numeric
+            if cleaned_input.isdigit():
+                chat_id = int(cleaned_input)
+                # For group/channel IDs, they usually start with -100
+                if chat_id > 0:
+                    chat = await client.get_chat(chat_id)
+                else:
+                    chat = await client.get_chat(chat_id)
+            else:
+                # Try as username
+                chat = await client.get_chat(cleaned_input)
+        except Exception as e:
+            print(f"Error getting chat: {str(e)}")
+            return {"success": False, "error": "Chat not found"}
         
         chat_type_map = {
             ChatType.SUPERGROUP: "supergroup",
@@ -266,8 +342,8 @@ async def get_chat_info(username):
             "account_created": "Unknown",
             "account_age": "Unknown",
             "profile_photo_url": profile_photo_url,
-            "api_owner": "@ISmartCoder",
-            "api_updates": "t.me/abirxdhackz",
+            "api_owner": "@nkka404",
+            "api_updates": "t.me/premium_channel_404",
             "links": {
                 "join": join_link,
                 "permanent": permanent_link
@@ -281,9 +357,24 @@ async def get_chat_info(username):
         return {"success": False, "error": f"Failed to fetch chat information: {str(e)}"}
 
 async def get_telegram_info(username_or_id):
-    # Clean the input
-    cleaned_input = username_or_id.strip('@').replace('https://', '').replace('http://', '').replace('t.me/', '').replace('/', '').replace(':', '')
-    print(f"Fetching info for: {cleaned_input}")
+    if not username_or_id:
+        return {
+            "success": False, 
+            "error": "No username or ID provided", 
+            "api_owner": "@nkka404", 
+            "api_updates": "t.me/premium_channel_404"
+        }
+    
+    cleaned_input = clean_username_or_id(username_or_id)
+    if not cleaned_input:
+        return {
+            "success": False, 
+            "error": "Invalid username or ID format", 
+            "api_owner": "@nkka404", 
+            "api_updates": "t.me/premium_channel_404"
+        }
+    
+    print(f"Fetching info for: {username_or_id} (cleaned: {cleaned_input})")
     
     # First try as user
     user_info = await get_user_info(cleaned_input)
@@ -298,14 +389,14 @@ async def get_telegram_info(username_or_id):
     return {
         "success": False, 
         "error": "Entity not found in Telegram database", 
-        "api_owner": "@ISmartCoder", 
-        "api_updates": "t.me/abirxdhackz"
+        "api_owner": "@nkka404", 
+        "api_updates": "t.me/premium_channel_404"
     }
 
 @app.get("/")
 async def root():
     return {
-        "message": "Telegram Info API by @ISmartCoder",
+        "message": "Telegram Info API by @nkka404",
         "status": "active",
         "endpoints": {
             "/api": "Get user/chat info",
@@ -313,8 +404,18 @@ async def root():
             "/health": "Check API health"
         },
         "version": "2.0.0",
-        "owner": "@ISmartCoder",
-        "updates": "t.me/abirxdhackz"
+        "owner": "@nkka404",
+        "updates": "t.me/premium_channel_404",
+        "supported_formats": [
+            "https://t.me/username",
+            "t.me/username",
+            "@username", 
+            "username",
+            "https://t.me/joinchat/xxxx",
+            "t.me/+invitecode",
+            "User ID (123456789)",
+            "Chat ID (-1001234567890)"
+        ]
     }
 
 @app.get("/api")
@@ -325,8 +426,8 @@ async def info_endpoint(username: str = "", size: int = 320):
             detail={
                 "success": False,
                 "error": "Missing 'username' parameter",
-                "api_owner": "@ISmartCoder",
-                "api_updates": "t.me/abirxdhackz"
+                "api_owner": "@nkka404",
+                "api_updates": "t.me/premium_channel_404"
             }
         )
     
@@ -349,8 +450,8 @@ async def info_endpoint(username: str = "", size: int = 320):
             detail={
                 "success": False,
                 "error": f"Internal server error: {str(e)}",
-                "api_owner": "@ISmartCoder",
-                "api_updates": "t.me/abirxdhackz"
+                "api_owner": "@nkka404",
+                "api_updates": "t.me/premium_channel_404"
             }
         )
 
@@ -379,3 +480,19 @@ async def health_check():
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+@app.get("/test/{input_str}")
+async def test_format(input_str: str):
+    """Test endpoint to see how different formats are cleaned"""
+    cleaned = clean_username_or_id(input_str)
+    return {
+        "original": input_str,
+        "cleaned": cleaned,
+        "is_digit": cleaned.isdigit() if cleaned else False,
+        "test_urls": [
+            "https://t.me/premium_channel_404",
+            "t.me/premium_channel_404",
+            "@premium_channel_404",
+            "premium_channel_404"
+        ]
+    }
