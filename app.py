@@ -14,7 +14,7 @@ import threading
 # Vercel environment variables
 API_ID = int(os.getenv("API_ID", "24785831"))
 API_HASH = os.getenv("API_HASH", "81b87c7c85bf0c4ca15ca94dcea3fb95")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7949734572:AAEcHhj8nJAEr1NUC7TMcn7dIusz2Ok6pdQ")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ")
 
 # Validate environment variables
 if not API_ID or not API_HASH or not BOT_TOKEN:
@@ -31,7 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pyrofork client setup
+# Pyrogram client setup
 client = None
 client_lock = threading.Lock()
 
@@ -75,19 +75,6 @@ def estimate_account_creation_date(user_id):
     days_difference = id_difference / 20000000
     creation_date = closest_date + timedelta(days=days_difference)
     return creation_date
-
-def format_user_status(status):
-    if not status:
-        return "Unknown"
-    status_map = {
-        UserStatus.ONLINE: "Online",
-        UserStatus.OFFLINE: "Offline",
-        UserStatus.RECENTLY: "Recently online",
-        UserStatus.LAST_WEEK: "Last seen within week",
-        UserStatus.LAST_MONTH: "Last seen within month",
-        UserStatus.LONG_AGO: "Last seen long ago"
-    }
-    return status_map.get(status, "Unknown")
 
 def get_profile_photo_url(username, size=320):
     if username:
@@ -173,22 +160,8 @@ async def get_user_info(username):
         account_created = estimate_account_creation_date(user.id)
         account_created_str = account_created.strftime("%B %d, %Y")
         account_age = calculate_account_age(account_created)
-        verified_status = getattr(user, 'is_verified', False)
-        status = format_user_status(getattr(user, 'status', None))
-        flags = "Clean"
-        if getattr(user, 'is_scam', False):
-            flags = "Scam"
-        elif getattr(user, 'is_fake', False):
-            flags = "Fake"
         
         profile_photo_url = get_profile_photo_url(user.username) if user.username else None
-        
-        last_online_date = None
-        next_offline_date = None
-        if hasattr(user, 'last_online_date') and user.last_online_date:
-            last_online_date = user.last_online_date.strftime("%B %d, %Y at %H:%M:%S")
-        if hasattr(user, 'next_offline_date') and user.next_offline_date:
-            next_offline_date = user.next_offline_date.strftime("%B %d, %Y at %H:%M:%S")
         
         usernames_list = format_usernames_list(getattr(user, 'usernames', []))
         
@@ -204,16 +177,7 @@ async def get_user_info(username):
             "dc_id": user.dc_id,
             "dc_location": dc_location,
             "is_premium": premium_status,
-            "is_verified": verified_status,
             "is_bot": user.is_bot,
-            "is_scam": getattr(user, 'is_scam', False),
-            "is_fake": getattr(user, 'is_fake', False),
-            "is_frozen": getattr(user, 'is_frozen', False),
-            "frozen_icon": getattr(user, 'frozen_icon', None),
-            "flags": flags,
-            "status": status,
-            "last_online_date": last_online_date,
-            "next_offline_date": next_offline_date,
             "account_created": account_created_str,
             "account_age": account_age,
             "profile_photo_url": profile_photo_url,
@@ -262,12 +226,6 @@ async def get_chat_info(username):
             join_link = f"tg://resolve?domain={chat.id}"
             permanent_link = f"tg://resolve?domain={chat.id}"
         
-        flags = "Clean"
-        if getattr(chat, 'is_scam', False):
-            flags = "Scam"
-        elif getattr(chat, 'is_fake', False):
-            flags = "Fake"
-        
         chat_data = {
             "success": True,
             "type": chat_type,
@@ -278,14 +236,9 @@ async def get_chat_info(username):
             "description": getattr(chat, 'description', None),
             "dc_id": getattr(chat, 'dc_id', None),
             "dc_location": dc_location,
-            "members_count": getattr(chat, 'members_count', None),
-            "is_verified": getattr(chat, 'is_verified', False),
-            "is_restricted": getattr(chat, 'is_restricted', False),
-            "is_scam": getattr(chat, 'is_scam', False),
-            "is_fake": getattr(chat, 'is_fake', False),
-            "is_frozen": getattr(chat, 'is_frozen', False),
-            "frozen_icon": getattr(chat, 'frozen_icon', None),
-            "flags": flags,
+            "is_bot": False,
+            "account_created": "Unknown",
+            "account_age": "Unknown",
             "profile_photo_url": profile_photo_url,
             "api_owner": "@nkka404",
             "api_updates": "t.me/premium_channel_404",
@@ -318,7 +271,7 @@ async def get_telegram_info(username):
 @app.get("/")
 async def root():
     return {
-        "message": "Telegram Info API by @ISmartCoder",
+        "message": "Telegram Info API by @nkka404",
         "status": "active",
         "endpoints": {
             "/api": "Get user/chat info",
@@ -392,3 +345,7 @@ async def health_check():
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+# Serverless function handler for Vercel
+def handler(request):
+    return app
