@@ -345,7 +345,3 @@ async def health_check():
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         }
-
-# Serverless function handler for Vercel
-def handler(request):
-    return app
