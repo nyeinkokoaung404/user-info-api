@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pyrofork
+tgcrypto
+python-dateutil
+pydantic
+pydantic-settings
