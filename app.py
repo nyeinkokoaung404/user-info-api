@@ -1,4 +1,4 @@
-# app.py - Vercel deployment
+# main.py - Vercel deployment အတွက် main file
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +11,7 @@ import os
 import asyncio
 import threading
 
-# Vercel environment variables
+# Vercel environment variables ကိုဖတ်ရန်
 API_ID = int(os.getenv("API_ID", "24785831"))
 API_HASH = os.getenv("API_HASH", "81b87c7c85bf0c4ca15ca94dcea3fb95")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ")
@@ -22,7 +22,7 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
 
 app = FastAPI(title="Telegram Info API", description="Get Telegram user/chat information", version="2.0.0")
 
-# CORS enable
+# CORS ကို enable လုပ်ထားပါတယ်
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -103,7 +103,7 @@ async def ensure_client():
                     api_id=API_ID,
                     api_hash=API_HASH,
                     bot_token=BOT_TOKEN,
-                    in_memory=True  # Vercel serverless
+                    in_memory=True  # Vercel serverless အတွက် လိုအပ်ပါတယ်
                 )
                 await client.start()
                 print("Pyrogram client started successfully")
@@ -149,11 +149,24 @@ async def get_user_info(username):
             return {"success": False, "error": "Client initialization failed"}
         
         DC_LOCATIONS = get_dc_locations()
-        user = await client.get_users(username)
+        
+        # Try to get user by username or ID
+        try:
+            user = await client.get_users(username)
+        except Exception:
+            # If username fails, try as user ID
+            try:
+                user_id = int(username)
+                user = await client.get_users(user_id)
+            except:
+                return {"success": False, "error": "User not found"}
         
         # Get full user info to retrieve bio
-        full_user = await client.get_chat(username)
-        bio = getattr(full_user, 'bio', None)
+        try:
+            full_user = await client.get_chat(user.id)
+            bio = getattr(full_user, 'bio', None)
+        except:
+            bio = None
         
         premium_status = getattr(user, 'is_premium', False)
         dc_location = DC_LOCATIONS.get(user.dc_id, "Unknown")
@@ -165,6 +178,7 @@ async def get_user_info(username):
         
         usernames_list = format_usernames_list(getattr(user, 'usernames', []))
         
+        # သင့်ရဲ့ JavaScript အတွက် လိုအပ်တဲ့ format
         user_data = {
             "success": True,
             "type": "bot" if user.is_bot else "user",
@@ -181,8 +195,8 @@ async def get_user_info(username):
             "account_created": account_created_str,
             "account_age": account_age,
             "profile_photo_url": profile_photo_url,
-            "api_owner": "@nkka404",
-            "api_updates": "t.me/premium_channel_404",
+            "api_owner": "@ISmartCoder",
+            "api_updates": "t.me/abirxdhackz",
             "links": {
                 "android": f"tg://openmessage?user_id={user.id}",
                 "ios": f"tg://user?id={user.id}",
@@ -202,7 +216,18 @@ async def get_chat_info(username):
             return {"success": False, "error": "Client initialization failed"}
         
         DC_LOCATIONS = get_dc_locations()
-        chat = await client.get_chat(username)
+        
+        # Try to get chat by username or ID
+        try:
+            chat = await client.get_chat(username)
+        except Exception:
+            # If username fails, try as chat ID
+            try:
+                chat_id = int(username.replace('-100', ''))
+                chat = await client.get_chat(chat_id)
+            except:
+                return {"success": False, "error": "Chat not found"}
+        
         chat_type_map = {
             ChatType.SUPERGROUP: "supergroup",
             ChatType.GROUP: "group",
@@ -237,11 +262,12 @@ async def get_chat_info(username):
             "dc_id": getattr(chat, 'dc_id', None),
             "dc_location": dc_location,
             "is_bot": False,
+            "is_premium": False,
             "account_created": "Unknown",
             "account_age": "Unknown",
             "profile_photo_url": profile_photo_url,
-            "api_owner": "@nkka404",
-            "api_updates": "t.me/premium_channel_404",
+            "api_owner": "@ISmartCoder",
+            "api_updates": "t.me/abirxdhackz",
             "links": {
                 "join": join_link,
                 "permanent": permanent_link
@@ -254,33 +280,41 @@ async def get_chat_info(username):
         print(f"Error fetching chat info: {str(e)}")
         return {"success": False, "error": f"Failed to fetch chat information: {str(e)}"}
 
-async def get_telegram_info(username):
-    username = username.strip('@').replace('https://', '').replace('http://', '').replace('t.me/', '').replace('/', '').replace(':', '')
-    print(f"Fetching info for: {username}")
+async def get_telegram_info(username_or_id):
+    # Clean the input
+    cleaned_input = username_or_id.strip('@').replace('https://', '').replace('http://', '').replace('t.me/', '').replace('/', '').replace(':', '')
+    print(f"Fetching info for: {cleaned_input}")
     
-    user_info = await get_user_info(username)
+    # First try as user
+    user_info = await get_user_info(cleaned_input)
     if user_info["success"]:
         return user_info
     
-    chat_info = await get_chat_info(username)
+    # Then try as chat
+    chat_info = await get_chat_info(cleaned_input)
     if chat_info["success"]:
         return chat_info
     
-    return {"success": False, "error": "Entity not found in Telegram database", "api_owner": "@nkka404", "api_updates": "t.me/premium_channel_404"}
+    return {
+        "success": False, 
+        "error": "Entity not found in Telegram database", 
+        "api_owner": "@ISmartCoder", 
+        "api_updates": "t.me/abirxdhackz"
+    }
 
 @app.get("/")
 async def root():
     return {
-        "message": "Telegram Info API by @nkka404",
+        "message": "Telegram Info API by @ISmartCoder",
         "status": "active",
         "endpoints": {
             "/api": "Get user/chat info",
-            "/api/user/{username}": "Get specific user/chat info",
+            "/api/user/{username_or_id}": "Get specific user/chat info",
             "/health": "Check API health"
         },
         "version": "2.0.0",
-        "owner": "@nkka404",
-        "updates": "t.me/premium_channel_404"
+        "owner": "@ISmartCoder",
+        "updates": "t.me/abirxdhackz"
     }
 
 @app.get("/api")
@@ -291,8 +325,8 @@ async def info_endpoint(username: str = "", size: int = 320):
             detail={
                 "success": False,
                 "error": "Missing 'username' parameter",
-                "api_owner": "@nkka404",
-                "api_updates": "t.me/premium_channel_404"
+                "api_owner": "@ISmartCoder",
+                "api_updates": "t.me/abirxdhackz"
             }
         )
     
@@ -315,14 +349,14 @@ async def info_endpoint(username: str = "", size: int = 320):
             detail={
                 "success": False,
                 "error": f"Internal server error: {str(e)}",
-                "api_owner": "@nkka404",
-                "api_updates": "t.me/premium_channel_404"
+                "api_owner": "@ISmartCoder",
+                "api_updates": "t.me/abirxdhackz"
             }
         )
 
-@app.get("/api/user/{username}")
-async def user_endpoint(username: str, size: int = 320):
-    return await info_endpoint(username, size)
+@app.get("/api/user/{username_or_id}")
+async def user_endpoint(username_or_id: str, size: int = 320):
+    return await info_endpoint(username_or_id, size)
 
 @app.get("/health")
 async def health_check():
