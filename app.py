@@ -1,4 +1,4 @@
-# app.py - Wispbyte deployment
+# api/index.py - Vercel Serverless Function
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,33 +9,33 @@ from dateutil.relativedelta import relativedelta
 import re
 import os
 import asyncio
-import threading
 import logging
+import json
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment variables for Wispbyte
-# Wispbyte မှာ environment variables ကို dashboard ကနေ ထည့်ပေးရပါမယ်
+# Environment variables for Vercel
 API_ID = os.getenv("API_ID", "24785831").strip()
 API_HASH = os.getenv("API_HASH", "81b87c7c85bf0c4ca15ca94dcea3fb95").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ").strip()
 
+## API_ID = os.getenv("API_ID")
+## API_HASH = os.getenv("API_HASH")
+## BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 # Validate environment variables
 if not API_ID or not API_HASH or not BOT_TOKEN:
-    logger.error("Missing environment variables. Please set API_ID, API_HASH, and BOT_TOKEN")
-    # Development fallback (comment out in production)
-    # API_ID = "24785831"
-    # API_HASH = "81b87c7c85bf0c4ca15ca94dcea3fb95"
-    # BOT_TOKEN = "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ"
+    logger.error("Missing environment variables. Please set API_ID, API_HASH, and BOT_TOKEN in Vercel")
+    raise RuntimeError("Missing required environment variables")
 
 app = FastAPI(title="Telegram Info API", description="Get Telegram user/chat information", version="2.0.0")
 
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # You can restrict this in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,8 +43,6 @@ app.add_middleware(
 
 # Global client instance
 client = None
-client_lock = threading.Lock()
-client_started = False
 
 def get_dc_locations():
     """Get Telegram DC locations"""
@@ -154,56 +152,37 @@ def clean_username_or_id(input_str):
     
     return cleaned if cleaned else None
 
-async def ensure_client():
-    """Ensure Pyrogram client is running (Wispbyte version)"""
-    global client, client_started
+async def get_client():
+    """Get or create Pyrogram client (Vercel serverless compatible)"""
+    global client
     
-    if client_started and client:
+    if client is None:
         try:
-            # Simple check if client is alive
+            logger.info("Creating new Pyrogram client...")
+            client = Client(
+                name="telegram_info_bot",
+                api_id=int(API_ID),
+                api_hash=API_HASH,
+                bot_token=BOT_TOKEN,
+                in_memory=True,
+                no_updates=True
+            )
+            
+            await client.start()
             me = await client.get_me()
-            logger.info(f"Client is alive, bot: @{me.username}")
-            return True
+            logger.info(f"Pyrogram client created. Bot: @{me.username}")
+            
         except Exception as e:
-            logger.warning(f"Client check failed: {e}, restarting...")
-            client_started = False
+            logger.error(f"Failed to create Pyrogram client: {str(e)}")
             client = None
+            raise
     
-    with client_lock:
-        if not client_started:
-            try:
-                logger.info("Starting Pyrogram client...")
-                
-                # Create client with session file for persistence
-                client = Client(
-                    name="telegram_info_bot",
-                    api_id=int(API_ID),
-                    api_hash=API_HASH,
-                    bot_token=BOT_TOKEN,
-                    in_memory=False,  # Use file-based session for persistence
-                    workdir="./"  # Store session in current directory
-                )
-                
-                await client.start()
-                me = await client.get_me()
-                client_started = True
-                logger.info(f"Pyrogram client started successfully! Bot: @{me.username}")
-                return True
-                
-            except Exception as e:
-                logger.error(f"Failed to start Pyrogram client: {str(e)}")
-                client = None
-                client_started = False
-                return False
-    
-    return True
+    return client
 
 async def get_user_info(username_or_id):
     """Get user information"""
     try:
-        if not await ensure_client():
-            return {"success": False, "error": "Client initialization failed"}
-        
+        client = await get_client()
         DC_LOCATIONS = get_dc_locations()
         
         cleaned_input = clean_username_or_id(username_or_id)
@@ -274,9 +253,7 @@ async def get_user_info(username_or_id):
 async def get_chat_info(username_or_id):
     """Get chat information"""
     try:
-        if not await ensure_client():
-            return {"success": False, "error": "Client initialization failed"}
-        
+        client = await get_client()
         DC_LOCATIONS = get_dc_locations()
         
         cleaned_input = clean_username_or_id(username_or_id)
@@ -384,32 +361,108 @@ async def get_telegram_info(username_or_id):
         "api_updates": "t.me/premium_channel_404"
     }
 
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    """Initialize client on startup"""
-    logger.info("Starting up Telegram Info API...")
-    try:
-        # Try to start client on startup
-        await ensure_client()
-    except Exception as e:
-        logger.error(f"Startup error: {e}")
-
-# Shutdown event  
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    global client, client_started
-    if client:
+# Vercel အတွက် handler function
+async def handler(request):
+    """Vercel serverless handler"""
+    path = request.get('path', '/')
+    method = request.get('method', 'GET')
+    
+    if path == '/api' or path.startswith('/api/'):
+        # API endpoint
+        username = request.get('query', {}).get('username', '')
+        size = int(request.get('query', {}).get('size', 320))
+        
+        if not username:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({
+                    "success": False,
+                    "error": "Missing 'username' parameter",
+                    "api_owner": "@nkka404",
+                    "api_updates": "t.me/premium_channel_404"
+                })
+            }
+        
         try:
-            await client.stop()
-            logger.info("Pyrogram client stopped")
+            result = await get_telegram_info(username)
+            if result.get("success") and "profile_photo_url" in result and result["profile_photo_url"]:
+                result["profile_photo_url"] = get_profile_photo_url(
+                    result.get("username"), size
+                ) if result.get("username") else None
+            
+            status_code = 200 if result.get("success") else 404
+            
+            return {
+                'statusCode': status_code,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps(result)
+            }
+            
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            return {
+                'statusCode': 500,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({
+                    "success": False,
+                    "error": f"Internal server error: {str(e)}",
+                    "api_owner": "@nkka404",
+                    "api_updates": "t.me/premium_channel_404"
+                })
+            }
+    
+    elif path == '/health':
+        # Health check endpoint
+        try:
+            await get_client()
+            status = "healthy"
         except:
-            pass
-    client = None
-    client_started = False
+            status = "unhealthy"
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                "status": status,
+                "timestamp": datetime.now().isoformat()
+            })
+        }
+    
+    else:
+        # Root endpoint
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                "message": "Telegram Info API by @nkka404",
+                "status": "active",
+                "version": "2.0.0",
+                "owner": "@nkka404",
+                "updates": "t.me/premium_channel_404",
+                "endpoints": {
+                    "/api?username=...": "Get user/chat info",
+                    "/health": "Check API health"
+                }
+            })
+        }
 
-# Routes
+# FastAPI routes (compatibility)
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -421,9 +474,7 @@ async def root():
         "updates": "t.me/premium_channel_404",
         "endpoints": {
             "/api?username=...": "Get user/chat info",
-            "/api/user/{username_or_id}": "Get specific user/chat info",
-            "/health": "Check API health",
-            "/test/{input}": "Test input formatting"
+            "/health": "Check API health"
         }
     }
 
@@ -467,40 +518,18 @@ async def info_endpoint(username: str = "", size: int = 320):
             }
         )
 
-@app.get("/api/user/{username_or_id}")
-async def user_endpoint(username_or_id: str, size: int = 320):
-    """User-specific endpoint"""
-    return await info_endpoint(username_or_id, size)
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     try:
-        if await ensure_client():
-            return {
-                "status": "healthy",
-                "client": "connected",
-                "timestamp": datetime.now().isoformat()
-            }
-        else:
-            return {
-                "status": "unhealthy", 
-                "client": "disconnected",
-                "timestamp": datetime.now().isoformat()
-            }
-    except Exception as e:
+        await get_client()
         return {
-            "status": "error",
-            "message": str(e),
+            "status": "healthy",
             "timestamp": datetime.now().isoformat()
         }
-
-@app.get("/test/{input_str}")
-async def test_format(input_str: str):
-    """Test endpoint for debugging"""
-    cleaned = clean_username_or_id(input_str)
-    return {
-        "original": input_str,
-        "cleaned": cleaned,
-        "is_digit": cleaned.isdigit() if cleaned else False
-    }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
