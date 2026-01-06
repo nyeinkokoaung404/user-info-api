@@ -1,42 +1,53 @@
-# app.py - Vercel deployment
+# app.py - Wispbyte deployment
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pyrogram import Client
-from pyrogram.enums import ChatType, UserStatus
-from pyrogram.errors import PeerIdInvalid, UsernameNotOccupied, ChannelInvalid
+from pyrogram.enums import ChatType
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import re
 import os
 import asyncio
 import threading
+import logging
 
-# Vercel environment variables
-API_ID = int(os.getenv("API_ID", "24785831"))
-API_HASH = os.getenv("API_HASH", "81b87c7c85bf0c4ca15ca94dcea3fb95")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ")
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Environment variables for Wispbyte
+# Wispbyte မှာ environment variables ကို dashboard ကနေ ထည့်ပေးရပါမယ်
+API_ID = os.getenv("API_ID", "24785831").strip()
+API_HASH = os.getenv("API_HASH", "81b87c7c85bf0c4ca15ca94dcea3fb95").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ").strip()
 
 # Validate environment variables
 if not API_ID or not API_HASH or not BOT_TOKEN:
-    raise ValueError("Please set API_ID, API_HASH, and BOT_TOKEN environment variables")
+    logger.error("Missing environment variables. Please set API_ID, API_HASH, and BOT_TOKEN")
+    # Development fallback (comment out in production)
+    # API_ID = "24785831"
+    # API_HASH = "81b87c7c85bf0c4ca15ca94dcea3fb95"
+    # BOT_TOKEN = "8007668447:AAE9RK3SCTvYVAXB8ZTQFUClCoqCAbvF9jQ"
 
 app = FastAPI(title="Telegram Info API", description="Get Telegram user/chat information", version="2.0.0")
 
-# CORS enable
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # You can restrict this in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pyrogram client setup
+# Global client instance
 client = None
 client_lock = threading.Lock()
+client_started = False
 
 def get_dc_locations():
+    """Get Telegram DC locations"""
     return {
         1: "MIA, Miami, USA, US",
         2: "AMS, Amsterdam, Netherlands, NL",
@@ -56,6 +67,7 @@ def get_dc_locations():
     }
 
 def calculate_account_age(creation_date):
+    """Calculate account age from creation date"""
     today = datetime.now()
     delta = relativedelta(today, creation_date)
     years = delta.years
@@ -64,6 +76,7 @@ def calculate_account_age(creation_date):
     return f"{years} years, {months} months, {days} days"
 
 def estimate_account_creation_date(user_id):
+    """Estimate account creation date based on user ID"""
     reference_points = [
         (100000000, datetime(2013, 8, 1)),
         (1273841502, datetime(2020, 8, 13)),
@@ -78,12 +91,14 @@ def estimate_account_creation_date(user_id):
     return creation_date
 
 def get_profile_photo_url(username, size=320):
+    """Get profile photo URL"""
     if username:
         username = username.strip('@')
         return f"https://t.me/i/userpic/{size}/{username}.jpg"
     return None
 
 def format_usernames_list(usernames):
+    """Format usernames list"""
     if not usernames:
         return []
     formatted_usernames = []
@@ -97,21 +112,13 @@ def format_usernames_list(usernames):
 def clean_username_or_id(input_str):
     """
     Clean and extract username/ID from various input formats
-    Supports:
-    - https://t.me/username
-    - t.me/username  
-    - @username
-    - username
-    - https://t.me/joinchat/xxxx (for private groups)
-    - User IDs
     """
     if not input_str:
         return None
     
-    # Remove leading/trailing whitespace
     cleaned = input_str.strip()
     
-    # Case 1: https://t.me/username or t.me/username
+    # Telegram URL patterns
     telegram_patterns = [
         r'https?://(?:www\.)?t\.me/([a-zA-Z0-9_]+)',
         r'https?://(?:www\.)?telegram\.me/([a-zA-Z0-9_]+)',
@@ -126,112 +133,104 @@ def clean_username_or_id(input_str):
         if match:
             return match.group(1)
     
-    # Case 2: Join chat links (private groups)
+    # Join chat links
     joinchat_pattern = r'https?://(?:www\.)?t\.me/joinchat/([a-zA-Z0-9_-]+)'
     match = re.search(joinchat_pattern, cleaned)
     if match:
         return match.group(1)
     
-    # Case 3: +joinchat links (another format)
+    # +joinchat links
     plus_joinchat_pattern = r'https?://(?:www\.)?t\.me/\+([a-zA-Z0-9_-]+)'
     match = re.search(plus_joinchat_pattern, cleaned)
     if match:
         return match.group(1)
     
-    # Case 4: @username format
+    # @username format
     if cleaned.startswith('@'):
         return cleaned[1:]
     
-    # Case 5: Direct username or ID
-    # Remove any remaining special characters
+    # Direct username or ID
     cleaned = re.sub(r'[^a-zA-Z0-9_\-]', '', cleaned)
     
     return cleaned if cleaned else None
 
 async def ensure_client():
-    global client
-    with client_lock:
-        if client is None:
-            try:
-                client = Client(
-                    "VercelTelegramAPI",
-                    api_id=API_ID,
-                    api_hash=API_HASH,
-                    bot_token=BOT_TOKEN,
-                    in_memory=True  # Vercel serverless
-                )
-                await client.start()
-                print("Pyrogram client started successfully")
-                return True
-            except Exception as e:
-                print(f"Failed to start Pyrogram client: {str(e)}")
-                client = None
-                return False
-        
+    """Ensure Pyrogram client is running (Wispbyte version)"""
+    global client, client_started
+    
+    if client_started and client:
         try:
-            # Check if client is connected
-            is_connected = getattr(client, 'is_connected', False)
-            if callable(is_connected):
-                connected = is_connected()
-            else:
-                connected = is_connected
-            
-            if not connected:
-                await client.start()
-                print("Pyrogram client reconnected successfully")
+            # Simple check if client is alive
+            me = await client.get_me()
+            logger.info(f"Client is alive, bot: @{me.username}")
+            return True
         except Exception as e:
-            print(f"Failed to check/restart client: {str(e)}")
+            logger.warning(f"Client check failed: {e}, restarting...")
+            client_started = False
+            client = None
+    
+    with client_lock:
+        if not client_started:
             try:
+                logger.info("Starting Pyrogram client...")
+                
+                # Create client with session file for persistence
                 client = Client(
-                    "VercelTelegramAPI",
-                    api_id=API_ID,
+                    name="telegram_info_bot",
+                    api_id=int(API_ID),
                     api_hash=API_HASH,
                     bot_token=BOT_TOKEN,
-                    in_memory=True
+                    in_memory=False,  # Use file-based session for persistence
+                    workdir="./"  # Store session in current directory
                 )
+                
                 await client.start()
-                print("Pyrogram client recreated successfully")
-            except Exception as e2:
-                print(f"Failed to recreate client: {str(e2)}")
+                me = await client.get_me()
+                client_started = True
+                logger.info(f"Pyrogram client started successfully! Bot: @{me.username}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Failed to start Pyrogram client: {str(e)}")
                 client = None
+                client_started = False
                 return False
-        
-        return True
+    
+    return True
 
 async def get_user_info(username_or_id):
+    """Get user information"""
     try:
         if not await ensure_client():
             return {"success": False, "error": "Client initialization failed"}
         
         DC_LOCATIONS = get_dc_locations()
         
-        # Clean the input
         cleaned_input = clean_username_or_id(username_or_id)
         if not cleaned_input:
             return {"success": False, "error": "Invalid username or ID format"}
         
-        print(f"Looking up user with cleaned input: {cleaned_input}")
+        logger.info(f"Looking up user: {cleaned_input}")
         
-        # Try to get user by username or ID
+        # Try to get user
         try:
-            # First try as user ID if it's numeric
             if cleaned_input.isdigit():
                 user_id = int(cleaned_input)
                 user = await client.get_users(user_id)
             else:
-                # Try as username
                 user = await client.get_users(cleaned_input)
         except Exception as e:
-            print(f"Error getting user: {str(e)}")
+            logger.error(f"Error getting user: {e}")
             return {"success": False, "error": "User not found"}
         
-        # Get full user info to retrieve bio
+        # Get bio if available
         try:
             full_user = await client.get_chat(user.id)
             bio = getattr(full_user, 'bio', None)
         except:
             bio = None
         
+        # Prepare user data
         premium_status = getattr(user, 'is_premium', False)
         dc_location = DC_LOCATIONS.get(user.dc_id, "Unknown")
         account_created = estimate_account_creation_date(user.id)
@@ -267,62 +266,57 @@ async def get_user_info(username_or_id):
             }
         }
         return user_data
-    except (PeerIdInvalid, UsernameNotOccupied):
-        return {"success": False, "error": "User not found"}
+        
     except Exception as e:
-        print(f"Error fetching user info: {str(e)}")
-        return {"success": False, "error": f"Failed to fetch user information: {str(e)}"}
+        logger.error(f"Error in get_user_info: {e}")
+        return {"success": False, "error": "Failed to fetch user information"}
 
 async def get_chat_info(username_or_id):
+    """Get chat information"""
     try:
         if not await ensure_client():
             return {"success": False, "error": "Client initialization failed"}
         
         DC_LOCATIONS = get_dc_locations()
         
-        # Clean the input
         cleaned_input = clean_username_or_id(username_or_id)
         if not cleaned_input:
             return {"success": False, "error": "Invalid username or ID format"}
         
-        print(f"Looking up chat with cleaned input: {cleaned_input}")
+        logger.info(f"Looking up chat: {cleaned_input}")
         
-        # Try to get chat by username or ID
+        # Try to get chat
         try:
-            # First try as chat ID if it's numeric
             if cleaned_input.isdigit():
                 chat_id = int(cleaned_input)
-                # For group/channel IDs, they usually start with -100
-                if chat_id > 0:
-                    chat = await client.get_chat(chat_id)
-                else:
-                    chat = await client.get_chat(chat_id)
+                chat = await client.get_chat(chat_id)
             else:
-                # Try as username
                 chat = await client.get_chat(cleaned_input)
         except Exception as e:
-            print(f"Error getting chat: {str(e)}")
+            logger.error(f"Error getting chat: {e}")
             return {"success": False, "error": "Chat not found"}
         
+        # Determine chat type
         chat_type_map = {
             ChatType.SUPERGROUP: "supergroup",
-            ChatType.GROUP: "group",
-            ChatType.CHANNEL: "channel"
+            ChatType.GROUP: "group", 
+            ChatType.CHANNEL: "channel",
+            ChatType.PRIVATE: "private"
         }
         chat_type = chat_type_map.get(chat.type, "unknown")
+        
         dc_location = DC_LOCATIONS.get(getattr(chat, 'dc_id', None), "Unknown")
-        
         profile_photo_url = get_profile_photo_url(chat.username) if chat.username else None
-        
         usernames_list = format_usernames_list(getattr(chat, 'usernames', []))
         
+        # Generate links
         if chat.username:
-            join_link = f"t.me/{chat.username}"
-            permanent_link = f"t.me/{chat.username}"
+            join_link = f"https://t.me/{chat.username}"
+            permanent_link = f"https://t.me/{chat.username}"
         elif chat.id < 0:
             chat_id_str = str(chat.id).replace('-100', '')
-            join_link = f"t.me/c/{chat_id_str}/1"
-            permanent_link = f"t.me/c/{chat_id_str}/1"
+            join_link = f"https://t.me/c/{chat_id_str}/1"
+            permanent_link = f"https://t.me/c/{chat_id_str}/1"
         else:
             join_link = f"tg://resolve?domain={chat.id}"
             permanent_link = f"tg://resolve?domain={chat.id}"
@@ -337,10 +331,7 @@ async def get_chat_info(username_or_id):
             "description": getattr(chat, 'description', None),
             "dc_id": getattr(chat, 'dc_id', None),
             "dc_location": dc_location,
-            "is_bot": False,
-            "is_premium": False,
-            "account_created": "Unknown",
-            "account_age": "Unknown",
+            "members_count": getattr(chat, 'members_count', None),
             "profile_photo_url": profile_photo_url,
             "api_owner": "@nkka404",
             "api_updates": "t.me/premium_channel_404",
@@ -350,13 +341,13 @@ async def get_chat_info(username_or_id):
             }
         }
         return chat_data
-    except (ChannelInvalid, PeerIdInvalid):
-        return {"success": False, "error": "Chat not found or access denied"}
+        
     except Exception as e:
-        print(f"Error fetching chat info: {str(e)}")
-        return {"success": False, "error": f"Failed to fetch chat information: {str(e)}"}
+        logger.error(f"Error in get_chat_info: {e}")
+        return {"success": False, "error": "Failed to fetch chat information"}
 
 async def get_telegram_info(username_or_id):
+    """Get information for user or chat"""
     if not username_or_id:
         return {
             "success": False, 
@@ -374,16 +365,16 @@ async def get_telegram_info(username_or_id):
             "api_updates": "t.me/premium_channel_404"
         }
     
-    print(f"Fetching info for: {username_or_id} (cleaned: {cleaned_input})")
+    logger.info(f"Fetching info for: {username_or_id}")
     
     # First try as user
     user_info = await get_user_info(cleaned_input)
-    if user_info["success"]:
+    if user_info.get("success"):
         return user_info
     
     # Then try as chat
     chat_info = await get_chat_info(cleaned_input)
-    if chat_info["success"]:
+    if chat_info.get("success"):
         return chat_info
     
     return {
@@ -393,33 +384,52 @@ async def get_telegram_info(username_or_id):
         "api_updates": "t.me/premium_channel_404"
     }
 
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    """Initialize client on startup"""
+    logger.info("Starting up Telegram Info API...")
+    try:
+        # Try to start client on startup
+        await ensure_client()
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+
+# Shutdown event  
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    global client, client_started
+    if client:
+        try:
+            await client.stop()
+            logger.info("Pyrogram client stopped")
+        except:
+            pass
+    client = None
+    client_started = False
+
+# Routes
 @app.get("/")
 async def root():
+    """Root endpoint"""
     return {
         "message": "Telegram Info API by @nkka404",
         "status": "active",
-        "endpoints": {
-            "/api": "Get user/chat info",
-            "/api/user/{username_or_id}": "Get specific user/chat info",
-            "/health": "Check API health"
-        },
         "version": "2.0.0",
         "owner": "@nkka404",
         "updates": "t.me/premium_channel_404",
-        "supported_formats": [
-            "https://t.me/username",
-            "t.me/username",
-            "@username", 
-            "username",
-            "https://t.me/joinchat/xxxx",
-            "t.me/+invitecode",
-            "User ID (123456789)",
-            "Chat ID (-1001234567890)"
-        ]
+        "endpoints": {
+            "/api?username=...": "Get user/chat info",
+            "/api/user/{username_or_id}": "Get specific user/chat info",
+            "/health": "Check API health",
+            "/test/{input}": "Test input formatting"
+        }
     }
 
 @app.get("/api")
 async def info_endpoint(username: str = "", size: int = 320):
+    """Main API endpoint"""
     if not username:
         raise HTTPException(
             status_code=400,
@@ -433,18 +443,20 @@ async def info_endpoint(username: str = "", size: int = 320):
     
     try:
         result = await get_telegram_info(username)
-        if result["success"] and "profile_photo_url" in result and result["profile_photo_url"]:
+        if result.get("success") and "profile_photo_url" in result and result["profile_photo_url"]:
             result["profile_photo_url"] = get_profile_photo_url(
                 result.get("username"), size
             ) if result.get("username") else None
         
-        if result["success"]:
+        if result.get("success"):
             return result
         else:
             raise HTTPException(status_code=404, detail=result)
             
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Unexpected error fetching Telegram info for {username}: {str(e)}")
+        logger.error(f"Unexpected error: {e}")
         raise HTTPException(
             status_code=500,
             detail={
@@ -457,10 +469,12 @@ async def info_endpoint(username: str = "", size: int = 320):
 
 @app.get("/api/user/{username_or_id}")
 async def user_endpoint(username_or_id: str, size: int = 320):
+    """User-specific endpoint"""
     return await info_endpoint(username_or_id, size)
 
 @app.get("/health")
 async def health_check():
+    """Health check endpoint"""
     try:
         if await ensure_client():
             return {
@@ -470,7 +484,7 @@ async def health_check():
             }
         else:
             return {
-                "status": "unhealthy",
+                "status": "unhealthy", 
                 "client": "disconnected",
                 "timestamp": datetime.now().isoformat()
             }
@@ -483,16 +497,10 @@ async def health_check():
 
 @app.get("/test/{input_str}")
 async def test_format(input_str: str):
-    """Test endpoint to see how different formats are cleaned"""
+    """Test endpoint for debugging"""
     cleaned = clean_username_or_id(input_str)
     return {
         "original": input_str,
         "cleaned": cleaned,
-        "is_digit": cleaned.isdigit() if cleaned else False,
-        "test_urls": [
-            "https://t.me/premium_channel_404",
-            "t.me/premium_channel_404",
-            "@premium_channel_404",
-            "premium_channel_404"
-        ]
+        "is_digit": cleaned.isdigit() if cleaned else False
     }
