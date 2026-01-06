@@ -1,7 +1,5 @@
 fastapi
-uvicorn[standard]
+uvicorn
 pyrofork
 tgcrypto
 python-dateutil
-pydantic
-pydantic-settings
